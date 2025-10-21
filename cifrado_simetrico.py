@@ -1,6 +1,7 @@
 # cifrado_simetrico.py
 
 import os
+import base64
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
@@ -51,11 +52,12 @@ def decrypt_data(ciphertext: bytes, nonce: bytes, encrypted_key: bytes, private_
 
 # Ejemplo de uso
 if __name__ == "__main__":
-    from gestión_de_usuarios import users_db
+    import base64
+    from gestion_de_usuarios import users_db
     # Obtener claves de Alice (registro del módulo anterior)
     alice_pub = base64.b64decode(users_db["alice"]["public_key"])
     alice_priv = base64.b64decode(users_db["alice"]["private_key"])
-    alice_pass = b"mi_contraseña_segura"
+    alice_pass = "mi_contraseña_segura".encode('utf-8')
     # Texto a cifrar
     data = b"Mensaje secreto para Alice."
     ct, nonce, enc_key = encrypt_data(data, alice_pub)

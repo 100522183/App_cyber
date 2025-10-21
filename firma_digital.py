@@ -39,13 +39,4 @@ def verify_signature(message: bytes, signature: bytes, public_key_pem: bytes):
     except Exception:
         print("[Verificación] Firma inválida o mensaje alterado.")
 
-# Ejemplo de uso
-if __name__ == "__main__":
-    from gestión_de_usuarios import users_db
-    # Cargar claves de Alice
-    alice_priv = base64.b64decode(users_db["alice"]["private_key"])
-    alice_pub = base64.b64decode(users_db["alice"]["public_key"])
-    alice_pass = b"mi_contraseña_segura"
-    mensaje = b"Este es el contenido del archivo firmado."
-    firma = sign_data(mensaje, alice_priv, alice_pass)
-    verify_signature(mensaje, firma, alice_pub)
+

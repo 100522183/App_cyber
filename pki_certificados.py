@@ -72,17 +72,3 @@ def sign_user_certificate(username: str, user_public_key_pem: bytes, int_key, in
     )
     print(f"[PKI] Certificado X.509 generado para usuario '{username}'.")
     return cert
-
-# Ejemplo de uso
-if __name__ == "__main__":
-    from gestión_de_usuarios import users_db
-    # Crear CA raíz e intermedia
-    root_key, root_cert = create_root_ca()
-    int_key, int_cert = create_intermediate_ca(root_key, root_cert)
-    # Obtener clave pública de Alice para certificar
-    alice_pub_pem = base64.b64decode(users_db["alice"]["public_key"])
-    user_cert = sign_user_certificate("alice", alice_pub_pem, int_key, int_cert)
-    # Mostrar sujetos de los certificados
-    print("Sujeto CA Raíz:", root_cert.subject)
-    print("Sujeto CA Intermedia:", int_cert.subject)
-    print("Sujeto Certificado de Alice:", user_cert.subject)
