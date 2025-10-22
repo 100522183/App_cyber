@@ -14,3 +14,12 @@ hash y HMAC) (o con cifrado autenticado)
 - Es aconsejable mostrar un log
 5. Autenticación de las claves públicas mediante certificados (despliegue de PKI) 
 - Hay una autoridad, pueden haber autoridades subordinadas que pueden emitir certificados de clave pública.
+
+# Instalación rápida para que el codigo funcione (VS Code)
+1. Abrir la carpeta del proyecto en VS Code.
+2. Activar entorno virtual (venv):
+   .\venv\Scripts\activate
+3. Instalar dependencias:
+   pip install -r requirements.txt
+4. Ejecutar main:
+   py main.py

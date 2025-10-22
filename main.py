@@ -3,7 +3,6 @@
 Aplicación principal: demostración de almacenamiento seguro
 Cumple con los requisitos de la práctica de Criptografía y Seguridad Informática.
 """
-
 import base64
 from gestion_de_usuarios import register_user, users_db, authenticate_user
 from cifrado_simetrico import encrypt_data, decrypt_data
