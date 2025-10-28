@@ -1,66 +1,99 @@
-# cifrado_simetrico.py
-
+# Cifrado de archivos con AES-GCM y etiquetado HMAC-SHA256.
 import os
 import base64
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes, hmac
 
-def encrypt_data(message: bytes, public_key_pem: bytes):
-    """
-    Cifra datos con AES-GCM y cifra la clave AES con RSA-OAEP.
-    """
-    # Cargar clave pública RSA del receptor
-    public_key = serialization.load_pem_public_key(public_key_pem)
-    # Generar clave AES (256 bits) y nonce
-    key = AESGCM.generate_key(bit_length=256)
-    aesgcm = AESGCM(key)
-    nonce = os.urandom(12)  # 96-bit nonce recomendado:contentReference[oaicite:16]{index=16}
-    ciphertext = aesgcm.encrypt(nonce, message, None)
-    # Cifrar la clave AES con RSA-OAEP
-    encrypted_key = public_key.encrypt(
-        key,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
-            label=None
-        )
-    )
-    print(f"[Cifrado] AES-256-GCM: datos cifrados (len={len(ciphertext)} bytes).")
-    print("[Cifrado] RSA-OAEP: clave AES cifrada con clave pública RSA.")
-    return ciphertext, nonce, encrypted_key
+def split_master_key(master_key: bytes):
+    if len(master_key) < 64:
+        raise ValueError('master_key necesita al menos 64 bytes')
+    return master_key[:32], master_key[32:64]
 
-def decrypt_data(ciphertext: bytes, nonce: bytes, encrypted_key: bytes, private_key_pem: bytes, password: bytes):
+def encrypt_file_with_wrapped_key(master_key: bytes, plaintext: bytes):
     """
-    Descifra la clave AES con RSA-OAEP y luego los datos con AES-GCM.
+    Cifra un archivo con una file_key aleatoria.
+    Devuelve un paquete con:
+      - enc_nonce, ciphertext (AES-GCM con file_key)
+      - wrap_nonce, wrapped_filekey (AES-GCM con owner_key)
+      - mac (HMAC-SHA256 sobre enc_nonce + ciphertext usando hmac_key)
+    Todos los campos binarios vienen en base64-encoded strings para almacenarlos fácilmente.
     """
-    # Cargar clave privada RSA del receptor (PEM cifrado con contraseña)
-    private_key = serialization.load_pem_private_key(private_key_pem, password=password)
-    # Descifrar clave AES
-    aes_key = private_key.decrypt(
-        encrypted_key,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
-            label=None
-        )
-    )
-    aesgcm = AESGCM(aes_key)
-    plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-    print("[Descifrado] AES-GCM: datos descifrados correctamente.")
+    # generar clave de archivo
+    file_key = os.urandom(32)  # AES-256 para el archivo
+    # cifrar el archivo con file_key
+    aesgcm_file = AESGCM(file_key)
+    enc_nonce = os.urandom(12)
+    ciphertext = aesgcm_file.encrypt(enc_nonce, plaintext, None)
+    # derivar owner key y hmac key del master_key
+    owner_key, hmac_key = split_master_key(master_key)
+    # cifrar file_key con owner_key
+    aesgcm_wrap = AESGCM(owner_key)
+    wrap_nonce = os.urandom(12)
+    wrapped_filekey = aesgcm_wrap.encrypt(wrap_nonce, file_key, None)
+    # calcular HMAC sobre nonce + ciphertext
+    h = hmac.HMAC(hmac_key, hashes.SHA256())
+    h.update(enc_nonce + ciphertext)
+    mac = h.finalize()
+    return {
+        'enc_nonce': base64.b64encode(enc_nonce).decode(),
+        'ciphertext': base64.b64encode(ciphertext).decode(),
+        'wrap_nonce': base64.b64encode(wrap_nonce).decode(),
+        'wrapped_filekey': base64.b64encode(wrapped_filekey).decode(),
+        'mac': base64.b64encode(mac).decode()
+    }
+
+def decrypt_file_with_wrapped_key(master_key: bytes, package: dict) -> bytes:
+    """Recupera el file_key usando master_key y descifra el archivo tras verificar el MAC."""
+    # decodificar campos
+    enc_nonce = base64.b64decode(package['enc_nonce'])
+    ciphertext = base64.b64decode(package['ciphertext'])
+    wrap_nonce = base64.b64decode(package['wrap_nonce'])
+    wrapped_filekey = base64.b64decode(package['wrapped_filekey'])
+    mac = base64.b64decode(package['mac'])
+    # derivar keys
+    owner_key, hmac_key = split_master_key(master_key)
+    # verificar HMAC
+    h = hmac.HMAC(hmac_key, hashes.SHA256())
+    h.update(enc_nonce + ciphertext)
+    try:
+        h.verify(mac)
+    except Exception as e:
+        raise ValueError('MAC inválida o datos alterados') from e
+    # descifrar file_key
+    aesgcm_wrap = AESGCM(owner_key)
+    file_key = aesgcm_wrap.decrypt(wrap_nonce, wrapped_filekey, None)
+    # descifrar archivo
+    aesgcm_file = AESGCM(file_key)
+    plaintext = aesgcm_file.decrypt(enc_nonce, ciphertext, None)
     return plaintext
 
-# Ejemplo de uso
-if __name__ == "__main__":
-    import base64
-    from gestion_de_usuarios import users_db
-    # Obtener claves de Alice (registro del módulo anterior)
-    alice_pub = base64.b64decode(users_db["alice"]["public_key"])
-    alice_priv = base64.b64decode(users_db["alice"]["private_key"])
-    alice_pass = "mi_contraseña_segura".encode('utf-8')
-    # Texto a cifrar
-    data = b"Mensaje secreto para Alice."
-    ct, nonce, enc_key = encrypt_data(data, alice_pub)
-    # Descifrado usando la clave privada de Alice
-    pt = decrypt_data(ct, nonce, enc_key, alice_priv, alice_pass)
-    print("Texto original recuperado:", pt)
+def create_share_token_from_package(package: dict, file_key: bytes, passphrase: str):
+    """
+    Crea un token que permite a otra persona recuperar file_key usando passphrase.
+    Implementación: derive share_key = scrypt(salt, passphrase) -> AESGCM key; cifrar file_key.
+    Retorna dict con salt, nonce, wrapped_key (all base64 strings).
+    """
+    from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+    salt = os.urandom(16)
+    kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
+    share_key = kdf.derive(passphrase.encode('utf-8'))
+    aesgcm = AESGCM(share_key)
+    nonce = os.urandom(12)
+    wrapped = aesgcm.encrypt(nonce, file_key, None)
+    return {
+        'salt': base64.b64encode(salt).decode(),
+        'nonce': base64.b64encode(nonce).decode(),
+        'wrapped_filekey': base64.b64encode(wrapped).decode()
+    }
+
+def recover_filekey_from_share_token(token: dict, passphrase: str) -> bytes:
+    """Deriva share_key desde passphrase y descifra file_key del token."""
+    from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+    salt = base64.b64decode(token['salt'])
+    nonce = base64.b64decode(token['nonce'])
+    wrapped = base64.b64decode(token['wrapped_filekey'])
+    kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
+    share_key = kdf.derive(passphrase.encode('utf-8'))
+    aesgcm = AESGCM(share_key)
+    file_key = aesgcm.decrypt(nonce, wrapped, None)
+    return file_key
