@@ -10,14 +10,7 @@ def split_master_key(master_key: bytes):
     return master_key[:32], master_key[32:64]
 
 def encrypt_file_with_wrapped_key(master_key: bytes, plaintext: bytes):
-    """
-    Cifra un archivo con una file_key aleatoria.
-    Devuelve un paquete con:
-      - enc_nonce, ciphertext (AES-GCM con file_key)
-      - wrap_nonce, wrapped_filekey (AES-GCM con owner_key)
-      - mac (HMAC-SHA256 sobre enc_nonce + ciphertext usando hmac_key)
-    Todos los campos binarios vienen en base64-encoded strings para almacenarlos fácilmente.
-    """
+
     # generar clave de archivo
     file_key = os.urandom(32)  # AES-256 para el archivo
     # cifrar el archivo con file_key
@@ -43,7 +36,6 @@ def encrypt_file_with_wrapped_key(master_key: bytes, plaintext: bytes):
     }
 
 def decrypt_file_with_wrapped_key(master_key: bytes, package: dict) -> bytes:
-    """Recupera el file_key usando master_key y descifra el archivo tras verificar el MAC."""
     # decodificar campos
     enc_nonce = base64.b64decode(package['enc_nonce'])
     ciphertext = base64.b64decode(package['ciphertext'])
@@ -68,11 +60,7 @@ def decrypt_file_with_wrapped_key(master_key: bytes, package: dict) -> bytes:
     return plaintext
 
 def create_share_token_from_package(package: dict, file_key: bytes, passphrase: str):
-    """
-    Crea un token que permite a otra persona recuperar file_key usando passphrase.
-    Implementación: derive share_key = scrypt(salt, passphrase) -> AESGCM key; cifrar file_key.
-    Retorna dict con salt, nonce, wrapped_key (all base64 strings).
-    """
+
     from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
     salt = os.urandom(16)
     kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
@@ -87,7 +75,7 @@ def create_share_token_from_package(package: dict, file_key: bytes, passphrase: 
     }
 
 def recover_filekey_from_share_token(token: dict, passphrase: str) -> bytes:
-    """Deriva share_key desde passphrase y descifra file_key del token."""
+
     from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
     salt = base64.b64decode(token['salt'])
     nonce = base64.b64decode(token['nonce'])

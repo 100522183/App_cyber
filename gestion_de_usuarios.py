@@ -1,4 +1,3 @@
-# gestion_de_usuarios.py
 # Registro y autenticación de usuarios usando Scrypt (KDF).
 import os
 import base64

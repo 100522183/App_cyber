@@ -21,5 +21,3 @@ hash y HMAC) (o con cifrado autenticado)
    .\venv\Scripts\activate
 3. Instalar dependencias:
    pip install -r requirements.txt
-4. Ejecutar main:
-   py main.py
