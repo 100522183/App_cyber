@@ -1,188 +1,248 @@
+# CLI SecureShare con sesión persistente
 import argparse
 import sys
-import os
+import os 
 import base64
-from gestion_de_usuarios import register_user, authenticate_user, get_master_key_for_user, users_db
-from cifrado_simetrico import encrypt_file_with_wrapped_key, decrypt_file_with_wrapped_key, create_share_token_from_package, recover_filekey_from_share_token
+import json
+from gestion_de_usuarios import register_user, get_master_key_for_user
+from cifrado_simetrico import (
+    encrypt_file_with_wrapped_key,
+    decrypt_file_with_wrapped_key,
+    create_share_token_from_package,
+    recover_filekey_from_share_token,
+)
 import storage
 
-SESSION = {'user': None, 'master': None}
+SESSION_FILE = "session.json"
+
+
+def save_session(user: str, master_key: bytes):
+    data = {"user": user, "master": base64.b64encode(master_key).decode()}
+    with open(SESSION_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    print(f"[Sesión] Guardada sesión activa de '{user}'.")
+
+
+def load_session():
+    if not os.path.exists(SESSION_FILE):
+        return None
+    with open(SESSION_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["master"] = base64.b64decode(data["master"])
+    return data
+
+
+def clear_session():
+    if os.path.exists(SESSION_FILE):
+        os.remove(SESSION_FILE)
+        print("[Sesión] Cerrada y eliminada.")
+
+
+def require_login():
+    session = load_session()
+    if not session:
+        print("Por favor haz login primero.")
+        return None
+    return session
+
 
 def cmd_register(args):
     try:
         register_user(args.user, args.password)
     except Exception as e:
-        print('Error registrando:', e)
+        print("Error registrando:", e)
+
 
 def cmd_login(args):
     try:
         master = get_master_key_for_user(args.user, args.password)
-        SESSION['user'] = args.user
-        SESSION['master'] = master
+        save_session(args.user, master)
         print(f"Sesión iniciada como {args.user}")
     except Exception as e:
-        print('Login fallido:', e)
+        print("Login fallido:", e)
 
-def require_login():
-    if not SESSION['user']:
-        print('Por favor haz login primero.')
-        return False
-    return True
+
+def cmd_logout(args):
+    clear_session()
+
 
 def cmd_upload(args):
-    if not require_login():
+    session = require_login()
+    if not session:
         return
     if not os.path.exists(args.path):
-        print('Ruta de fichero no encontrada.')
+        print("Ruta de fichero no encontrada.")
         return
-    with open(args.path, 'rb') as f:
+    with open(args.path, "rb") as f:
         data = f.read()
-    package = encrypt_file_with_wrapped_key(SESSION['master'], data)
-    storage.save_package(SESSION['user'], args.name or os.path.basename(args.path), package)
+    package = encrypt_file_with_wrapped_key(session["master"], data)
+    storage.save_package(session["user"], args.name or os.path.basename(args.path), package)
+
 
 def cmd_list(args):
-    if not require_login():
+    session = require_login()
+    if not session:
         return
-    files = storage.list_files(SESSION['user'])
-    print('Archivos de', SESSION['user'])
+    files = storage.list_files(session["user"])
+    print("Archivos de", session["user"])
     for f in files:
-        print(' -', f)
+        print(" -", f)
+
 
 def cmd_download(args):
-    if not require_login():
+    session = require_login()
+    if not session:
         return
     try:
-        pkg = storage.load_package(SESSION['user'], args.name)
-        plaintext = decrypt_file_with_wrapped_key(SESSION['master'], pkg)
-        out_dir = 'downloads'
+        pkg = storage.load_package(session["user"], args.name)
+        plaintext = decrypt_file_with_wrapped_key(session["master"], pkg)
+        out_dir = "downloads"
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, args.name)
-        with open(out_path, 'wb') as f:
+        with open(out_path, "wb") as f:
             f.write(plaintext)
-        print('Archivo descifrado guardado en', out_path)
+        print("Archivo descifrado guardado en", out_path)
     except Exception as e:
-        print('Error descargando:', e)
+        print("Error descargando:", e)
+
 
 def cmd_share(args):
-    if not require_login():
+    session = require_login()
+    if not session:
         return
     try:
-        pkg = storage.load_package(SESSION['user'], args.name)
-        # Need to recover file_key to create token: decrypt wrapped_filekey with master
+        pkg = storage.load_package(session["user"], args.name)
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        import base64
-        owner_key = SESSION['master'][:32]
-        wrap_nonce = base64.b64decode(pkg['wrap_nonce'])
-        wrapped_filekey = base64.b64decode(pkg['wrapped_filekey'])
+
+        owner_key = session["master"][:32]
+        wrap_nonce = base64.b64decode(pkg["wrap_nonce"])
+        wrapped_filekey = base64.b64decode(pkg["wrapped_filekey"])
         aesgcm_wrap = AESGCM(owner_key)
         file_key = aesgcm_wrap.decrypt(wrap_nonce, wrapped_filekey, None)
         token = create_share_token_from_package(pkg, file_key, args.passphrase)
-        # Save token for owner
-        tname = args.token_name or (args.name + '_token')
-        storage.save_share_token(SESSION['user'], tname, token)
-        print('Token creado. Entrega token + passphrase al destinatario.')
+        tname = args.token_name or (args.name + "_token")
+        storage.save_share_token(session["user"], tname, token)
+        print("Token creado. Entrega token + passphrase al destinatario.")
     except Exception as e:
-        print('Error compartiendo archivo:', e)
+        print("Error compartiendo archivo:", e)
+
 
 def cmd_receive(args):
-    # recipient loads token file from another user's storage manually (simulate by path)
-    if not require_login():
+    """El receptor recibe un token y un paquete cifrado del remitente, 
+    reenvuelve la clave de archivo con su propia master key y recalcula el HMAC."""
+    session = require_login()
+    if not session:
         return
     try:
-        # load token from path provided
+        import json, base64, os
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        from cryptography.hazmat.primitives import hashes, hmac
+
+        # Cargar el token de compartición (desde ruta o desde almacenamiento local)
         if args.token_path:
-            import json
             with open(args.token_path, 'r', encoding='utf-8') as f:
                 token = json.load(f)
         else:
-            # or load from own storage (if teacher saved)
-            token = storage.load_share_token(SESSION['user'], args.token_name)
+            token = storage.load_share_token(session['user'], args.token_name)
+
+        # Recuperar la file_key usando la passphrase
+        from cifrado_simetrico import recover_filekey_from_share_token
         file_key = recover_filekey_from_share_token(token, args.passphrase)
-        # Now we need to create a new package that uses our master to wrap this file_key so we can store it
-        # For simplicity, require user to also provide original pkg path (owner's pkg) path via args.pkg_path
+
+        # Cargar el paquete original (.pkg.json) del remitente
         if not args.pkg_path:
-            print('Para recibir necesita --pkg-path (ruta al paquete .pkg.json original del propietario).')
+            print("Debes proporcionar --pkg-path (ruta al paquete original del propietario).")
             return
-        import json, base64
         with open(args.pkg_path, 'r', encoding='utf-8') as f:
             orig_pkg = json.load(f)
-        # Re-wrap file_key with recipient master
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        recipient_owner_key = SESSION['master'][:32]
+
+        # Reenvolver la file_key con la master key del receptor (su propio owner_key)
+        recipient_owner_key = session["master"][:32]
         aesgcm_wrap = AESGCM(recipient_owner_key)
         new_wrap_nonce = os.urandom(12)
         new_wrapped = aesgcm_wrap.encrypt(new_wrap_nonce, file_key, None)
-        # Build new package: keep enc_nonce and ciphertext and mac from original, replace wrap fields
-        new_pkg = {
-            'enc_nonce': orig_pkg['enc_nonce'],
-            'ciphertext': orig_pkg['ciphertext'],
-            'wrap_nonce': base64.b64encode(new_wrap_nonce).decode(),
-            'wrapped_filekey': base64.b64encode(new_wrapped).decode(),
-            'mac': orig_pkg['mac']
-        }
-        # Save into recipient storage with provided new name
-        target_name = args.save_as or ('received_' + os.path.basename(args.pkg_path).replace('.pkg.json',''))
-        storage.save_package(SESSION['user'], target_name, new_pkg)
-        print('Archivo recibido y almacenado como', target_name)
-    except Exception as e:
-        print('Error recibiendo archivo:', e)
 
-def cmd_logout(args):
-    SESSION['user'] = None
-    SESSION['master'] = None
-    print('Sesión cerrada.')
+        # Recalcular nuevo HMAC con la hmac_key del receptor
+        recipient_hmac_key = session["master"][32:64]
+        enc_nonce = base64.b64decode(orig_pkg["enc_nonce"])
+        ciphertext = base64.b64decode(orig_pkg["ciphertext"])
+        h = hmac.HMAC(recipient_hmac_key, hashes.SHA256())
+        h.update(enc_nonce + ciphertext)
+        new_mac = base64.b64encode(h.finalize()).decode()
+
+        # Construir el nuevo paquete completo
+        new_pkg = {
+            "enc_nonce": orig_pkg["enc_nonce"],
+            "ciphertext": orig_pkg["ciphertext"],
+            "wrap_nonce": base64.b64encode(new_wrap_nonce).decode(),
+            "wrapped_filekey": base64.b64encode(new_wrapped).decode(),
+            "mac": new_mac,
+        }
+
+        # Guardar el paquete cifrado en el almacenamiento del receptor
+        target_name = args.save_as or (
+            "received_" + os.path.basename(args.pkg_path).replace(".pkg.json", "")
+        )
+        storage.save_package(session["user"], target_name, new_pkg)
+
+        print(f"[Receive] Archivo recibido y guardado como '{target_name}'.")
+        print("[Receive] Nuevo HMAC recalculado correctamente para el receptor.")
+
+    except Exception as e:
+        print("Error recibiendo archivo:", e)
 
 def build_parser():
-    p = argparse.ArgumentParser(description='SecureShare CLI')
-    sp = p.add_subparsers(dest='cmd')
+    p = argparse.ArgumentParser(description="SecureShare CLI")
+    sp = p.add_subparsers(dest="cmd")
 
-    p_register = sp.add_parser('register')
-    p_register.add_argument('user')
-    p_register.add_argument('password')
-    p_register.set_defaults(func=cmd_register)
+    sp.add_parser("logout").set_defaults(func=cmd_logout)
 
-    p_login = sp.add_parser('login')
-    p_login.add_argument('user')
-    p_login.add_argument('password')
-    p_login.set_defaults(func=cmd_login)
+    reg = sp.add_parser("register")
+    reg.add_argument("user")
+    reg.add_argument("password")
+    reg.set_defaults(func=cmd_register)
 
-    p_upload = sp.add_parser('upload')
-    p_upload.add_argument('path')
-    p_upload.add_argument('--name', default=None)
-    p_upload.set_defaults(func=cmd_upload)
+    login = sp.add_parser("login")
+    login.add_argument("user")
+    login.add_argument("password")
+    login.set_defaults(func=cmd_login)
 
-    p_list = sp.add_parser('list')
-    p_list.set_defaults(func=cmd_list)
+    upl = sp.add_parser("upload")
+    upl.add_argument("path")
+    upl.add_argument("--name", default=None)
+    upl.set_defaults(func=cmd_upload)
 
-    p_download = sp.add_parser('download')
-    p_download.add_argument('name')
-    p_download.set_defaults(func=cmd_download)
+    lst = sp.add_parser("list")
+    lst.set_defaults(func=cmd_list)
 
-    p_share = sp.add_parser('share')
-    p_share.add_argument('name')
-    p_share.add_argument('passphrase')
-    p_share.add_argument('--token-name', dest='token_name')
-    p_share.set_defaults(func=cmd_share)
+    dwn = sp.add_parser("download")
+    dwn.add_argument("name")
+    dwn.set_defaults(func=cmd_download)
 
-    p_receive = sp.add_parser('receive')
-    p_receive.add_argument('passphrase')
-    p_receive.add_argument('--token-path', default=None)
-    p_receive.add_argument('--pkg-path', default=None)
-    p_receive.add_argument('--save-as', default=None)
-    p_receive.set_defaults(func=cmd_receive)
+    shr = sp.add_parser("share")
+    shr.add_argument("name")
+    shr.add_argument("passphrase")
+    shr.add_argument("--token-name", dest="token_name")
+    shr.set_defaults(func=cmd_share)
 
-    p_logout = sp.add_parser('logout')
-    p_logout.set_defaults(func=cmd_logout)
+    rcv = sp.add_parser("receive")
+    rcv.add_argument("passphrase")
+    rcv.add_argument("--token-path", default=None)
+    rcv.add_argument("--pkg-path", default=None)
+    rcv.add_argument("--save-as", default=None)
+    rcv.set_defaults(func=cmd_receive)
 
     return p
+
 
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    if not hasattr(args, 'func'):
+    if not hasattr(args, "func"):
         parser.print_help()
         return
     args.func(args)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
