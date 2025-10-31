@@ -42,12 +42,15 @@ def derive_master_key(password: str, salt: bytes) -> bytes:
     kdf = Scrypt(salt=salt, **SCRYPT_PARAMS)
     return kdf.derive(password.encode("utf-8"))  # 64 bytes
 
+def derive_verifier(username: str, password: str, salt: bytes) -> bytes:
+    kdf = Scrypt(salt=salt, **SCRYPT_PARAMS)
+    return kdf.derive((username+password).encode("utf-8"))
 
 def register_user(username: str, password: str):
     if username in users_db:
         raise ValueError("Usuario ya existe")
     salt = os.urandom(16)
-    master = derive_master_key(password, salt)
+    master = derive_verifier(username, password, salt)
     users_db[username] = {
         "salt": base64.b64encode(salt).decode(),
         "verifier": base64.b64encode(master).decode(),
@@ -64,7 +67,7 @@ def authenticate_user(username: str, password: str) -> bool:
     salt = base64.b64decode(user["salt"])
     expected = base64.b64decode(user["verifier"])
     try:
-        candidate = derive_master_key(password, salt)
+        candidate = derive_verifier(username, password, salt)
         if candidate == expected:
             print(f"[Autenticación] Usuario '{username}' autenticado correctamente.")
             return True
