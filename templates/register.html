@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Registro{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center align-items-center" style="min-height: 60vh;">
+    <div class="col-md-5">
+        <div class="card card-custom">
+            <div class="card-header-custom text-center" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">
+                <i class="fas fa-user-plus fa-2x mb-2"></i><br>
+                Crear Cuenta Nueva
+            </div>
+            <div class="card-body p-4">
+                <form method="post" action="/register">
+                    <div class="mb-3">
+                        <label class="form-label text-muted">Elige un Usuario</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-user"></i></span>
+                            <input type="text" name="username" class="form-control" required>
+                        </div>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label text-muted">Define tu Contraseña</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-lock"></i></span>
+                            <input type="password" name="password" class="form-control" required>
+                        </div>
+                        <div class="form-text">Generaremos un certificado digital y claves criptográficas automáticamente.</div>
+                    </div>
+                    <div class="d-grid">
+                        <input type="submit" value="Registrarme" class="btn btn-success text-white" style="background: #11998e; border:none;">
+                    </div>
+                </form>
+            </div>
+            <div class="card-footer text-center bg-white border-0 pb-4">
+                <small class="text-muted">¿Ya tienes cuenta? <a href="/" class="text-success fw-bold">Inicia sesión</a></small>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

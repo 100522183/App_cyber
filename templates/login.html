@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Iniciar Sesión{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center align-items-center" style="min-height: 60vh;">
+    <div class="col-md-5">
+        <div class="card card-custom">
+            <div class="card-header-custom text-center">
+                <i class="fas fa-lock fa-2x mb-2"></i><br>
+                Acceso Seguro
+            </div>
+            <div class="card-body p-4">
+                <form method="post" action="/login">
+                    <div class="mb-3">
+                        <label class="form-label text-muted">Usuario</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-user"></i></span>
+                            <input type="text" name="username" class="form-control" required placeholder="Tu nombre de usuario">
+                        </div>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label text-muted">Contraseña</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-key"></i></span>
+                            <input type="password" name="password" class="form-control" required placeholder="••••••••">
+                        </div>
+                    </div>
+                    <div class="d-grid">
+                        <input type="submit" value="Entrar" class="btn btn-primary btn-primary-custom text-white">
+                    </div>
+                </form>
+            </div>
+            <div class="card-footer text-center bg-white border-0 pb-4">
+                <small class="text-muted">¿No tienes cuenta? <a href="/register_page" class="text-primary fw-bold">Regístrate aquí</a></small>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
